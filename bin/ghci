@@ -1,0 +1,5 @@
+#!/bin/sh -eux
+
+export DB="dbname=psql_db_dev host=localhost user=psql_db_dev password=psql_db_dev port=5432"
+
+./mafia quick -p test/test.hs

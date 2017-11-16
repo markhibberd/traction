@@ -1,0 +1,8 @@
+#!/bin/sh -eux
+
+dropdb traction_test || true
+createuser -S -d -R traction_test || true
+createdb traction_test
+echo "alter user traction_test with SUPERUSER;" | psql traction_test
+echo "alter user traction_test with encrypted password 'traction_test';" | psql traction_test
+echo "grant all privileges on database traction_test to traction_test;" | psql traction_test
