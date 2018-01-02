@@ -5,6 +5,7 @@
 module Test.Traction where
 
 import           Control.Monad.IO.Class (MonadIO (..))
+import           Control.Monad.Morph (hoist, lift)
 
 import           Data.Pool (Pool)
 import           Data.Text (Text)
@@ -59,7 +60,7 @@ prop_schema :: Property
 prop_schema =
   property $ do
     pool <- liftIO $ mkPool
-    liftExceptT . testDb pool $ do
+    evalExceptT . hoist lift . testDb pool $ do
       void $ migrate schema
       void $ migrate schema
 
@@ -98,10 +99,10 @@ schema = [
     |]
   ]
 
-db :: Db a -> Test IO a
+db :: Db a -> PropertyT IO a
 db x = do
   pool <- liftIO mkPool
-  liftExceptT . testDb pool $ migrate schema >> x
+  evalExceptT . hoist lift . testDb pool $ migrate schema >> x
 
 
 mkPool :: IO (Pool Postgresql.Connection)
@@ -114,7 +115,7 @@ checkDb group =
     Group name properties ->
       checkSequential (Group name ((fmap . fmap) (withTests 5) properties))
 
-genOrganisation :: Monad m => Gen m Text
+genOrganisation :: Gen Text
 genOrganisation = do
   cooking <- Gen.element [
       "fried"
