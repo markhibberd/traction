@@ -50,14 +50,14 @@ query_ q =
   liftDb . withConnection q $ \c ->
     Postgresql.query_ c q
 
-execute :: (MonadDb m, ToRow a) => Postgresql.Query -> a -> m ()
+execute :: (MonadDb m, ToRow a) => Postgresql.Query -> a -> m Int64
 execute q parameters =
-  liftDb . void . withConnection q $ \c ->
+  liftDb . withConnection q $ \c ->
     Postgresql.execute c q parameters
 
-execute_ :: MonadDb m => Postgresql.Query -> m ()
+execute_ :: MonadDb m => Postgresql.Query -> m Int64
 execute_ q =
-  liftDb . void . withConnection q $ \c ->
+  liftDb . withConnection q $ \c ->
     Postgresql.execute_  c q
 
 possibly :: Postgresql.Query -> Db [a] -> Db (Maybe a)

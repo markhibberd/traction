@@ -26,8 +26,8 @@ data Migration =
 
 migrate :: [Migration] -> Db [Migration]
 migrate migrations = do
-  Sql.execute_ "SET client_min_messages TO WARNING"
-  Sql.execute_ [sql| CREATE TABLE IF NOT EXISTS migrations (migration TEXT PRIMARY KEY) |]
+  void $ Sql.execute_ "SET client_min_messages TO WARNING"
+  void $ Sql.execute_ [sql| CREATE TABLE IF NOT EXISTS migrations (migration TEXT PRIMARY KEY) |]
   installed <- (fmap . fmap) Postgresql.fromOnly $ Sql.query_ [sql| SELECT migration FROM migrations |]
   forM (diff migrations installed) $ \migration -> do
     void $ Sql.execute_ $ migrationQuery migration
