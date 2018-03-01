@@ -22,7 +22,7 @@ import           Data.Monoid as X (Monoid (..), (<>))
 import           Data.Traversable as X
 import           Prelude as X (Eq (..), Show (..), Ord (..), Num (..), Enum, Bounded (..), Integral (..), Double, error, seq, fromIntegral, (/), (^), fst, snd)
 import           Text.Read as X (Read (..), readMaybe)
-import           Traction.EitherT as X
+import           Control.Monad.Trans.Either as X
 
 
 fromMaybeM :: Applicative f => f a -> Maybe a -> f a

@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 module Traction.Control (
     Db (..)
   , DbError (..)
@@ -19,6 +20,7 @@ import           Control.Monad.Catch (Handler (..), catches, bracket)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Morph (squash)
 import           Control.Monad.Trans.Class (MonadTrans (..))
+import           Control.Monad.Trans.Except (ExceptT(..))
 import           Control.Monad.Trans.Reader (ReaderT (..), ask)
 
 import           Data.ByteString (ByteString)
@@ -64,7 +66,7 @@ renderDbError e =
 
 newtype Db a =
   Db {
-      _runDb :: ReaderT Postgresql.Connection (EitherT DbError IO) a
+      _runDb :: ReaderT Postgresql.Connection (ExceptT DbError IO) a
     }  deriving (Functor, Applicative, Monad, MonadIO)
 
 class MonadIO m => MonadDb m where
@@ -80,7 +82,7 @@ failWith :: DbError -> Db a
 failWith =
   Db . lift . left
 
-runDb :: Pool Postgresql.Connection -> Db a -> EitherT DbError IO a
+runDb :: Pool Postgresql.Connection -> Db a -> ExceptT DbError IO a
 runDb pool db =
   newEitherT $ Pool.withResource pool $ \c ->
     -- NOTE: this could be a lot better, withTransaction will try to commit
@@ -96,11 +98,11 @@ runDb pool db =
         Right _ ->
           pure r
 
-runDbT :: Pool Postgresql.Connection -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
+runDbT :: Pool Postgresql.Connection -> (DbError -> e) -> ExceptT e Db a -> ExceptT e IO a
 runDbT pool handler db =
   squash $ mapEitherT (firstEitherT handler . runDb pool) db
 
-testDb :: Pool Postgresql.Connection -> Db a -> EitherT DbError IO a
+testDb :: Pool Postgresql.Connection -> Db a -> ExceptT DbError IO a
 testDb pool db =
   newEitherT $ Pool.withResource pool $ \c ->
     bracket (Postgresql.begin c >> pure c) Postgresql.rollback . const $
@@ -120,7 +122,7 @@ withConnection :: Postgresql.Query -> (Postgresql.Connection -> IO a) -> Db a
 withConnection query f =
   Db $ ask >>= lift . safely query . f
 
-safely :: Postgresql.Query -> IO a -> EitherT DbError IO a
+safely :: Postgresql.Query -> IO a -> ExceptT DbError IO a
 safely query action =
   newEitherT $ catches (Right <$> action) [
       Handler $ pure . Left . DbSqlError query
