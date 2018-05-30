@@ -25,6 +25,7 @@ import           Control.Monad.Catch (Exception, MonadMask (..), Handler (..), h
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Morph (squash)
 import           Control.Monad.Trans.Class (MonadTrans (..))
+import           Control.Monad.Trans.Except (ExceptT(..))
 import           Control.Monad.Trans.Reader (ReaderT (..), ask)
 
 import           Data.ByteString (ByteString)
