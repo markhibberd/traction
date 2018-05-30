@@ -1,7 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE RankNTypes #-}
 module Traction.Control (
     Db (..)
   , DbError (..)
@@ -74,7 +74,7 @@ renderDbError e =
 
 newtype Db a =
   Db {
-      _runDb :: ReaderT Postgresql.Connection (ExceptT DbError IO) a
+      _runDb :: ReaderT Postgresql.Connection (EitherT DbError IO) a
     }  deriving (Functor, Applicative, Monad, MonadIO)
 
 class MonadIO m => MonadDb m where
@@ -170,7 +170,7 @@ withConnection :: Postgresql.Query -> (Postgresql.Connection -> IO a) -> Db a
 withConnection query f =
   Db $ ask >>= lift . safely query . f
 
-safely :: Postgresql.Query -> IO a -> ExceptT DbError IO a
+safely :: Postgresql.Query -> IO a -> EitherT DbError IO a
 safely query action =
   newEitherT $ catches (Right <$> action) [
       Handler $ pure . Left . DbSqlError query
