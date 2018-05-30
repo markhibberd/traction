@@ -1,4 +1,7 @@
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 module Traction.Sql (
     Only (..)
   , sql
@@ -14,7 +17,20 @@ module Traction.Sql (
   , valueWith
   , values
   , valuesWith
+  , Savepoint (..)
+  , createSavepoint
+  , releaseSavepoint
+  , rollbackSavepoint
+  , Unique (..)
+  , withUniqueCheck
+  , withUniqueCheckSavepoint
   ) where
+
+import           Control.Monad.Trans.Class (MonadTrans (..))
+import           Control.Monad.Trans.Reader (ask, runReaderT)
+import           Control.Monad.IO.Class (MonadIO (..))
+
+import           Data.Text (Text)
 
 import           Database.PostgreSQL.Simple.SqlQQ (sql)
 import           Database.PostgreSQL.Simple (ToRow, FromRow, Only (..))
@@ -93,3 +109,54 @@ values =
 valuesWith :: (Functor f, Functor g) => (a -> b) -> g (f (Only a)) -> g (f b)
 valuesWith f =
   (fmap . fmap) (f . fromOnly)
+
+newtype Savepoint =
+  Savepoint {
+      renderSavepoint :: Text
+    } deriving (Eq, Show)
+
+createSavepoint :: Savepoint -> Db ()
+createSavepoint n =
+  void $ execute [sql| SAVEPOINT ? |] (Only . renderSavepoint $ n)
+
+releaseSavepoint :: Savepoint -> Db ()
+releaseSavepoint n =
+  void $ execute [sql| RELEASE SAVEPOINT ? |] (Only . renderSavepoint $ n)
+
+rollbackSavepoint :: Savepoint -> Db ()
+rollbackSavepoint n =
+  void $ execute [sql| ROLLBACK TO SAVEPOINT ? |] (Only . renderSavepoint $ n)
+
+bracketSavepoint :: Savepoint -> Db a -> Db a
+bracketSavepoint savepoint db =
+  Db $ ask >>= \c -> lift $ do
+    r <- liftIO . runEitherT $ flip runReaderT c $ _runDb (createSavepoint savepoint >> db)
+    case r of
+      Left _ -> do
+        flip runReaderT c $ _runDb (rollbackSavepoint savepoint)
+        newEitherT $ pure r
+      Right _ -> do
+        flip runReaderT c $ _runDb (releaseSavepoint savepoint)
+        newEitherT $ pure r
+
+data Unique a =
+    Unique a
+  | Duplicate Postgresql.Query Postgresql.SqlError
+    deriving (Show, Functor)
+
+withUniqueCheck :: Db a -> Db (Unique a)
+withUniqueCheck =
+  withUniqueCheckSavepoint (Savepoint "duplicate_key_savepoint")
+
+withUniqueCheckSavepoint :: Savepoint -> Db a -> Db (Unique a)
+withUniqueCheckSavepoint savepoint db =
+  Db $ ask >>= \c -> lift $ do
+    r <- liftIO . runEitherT $ flip runReaderT c $ _runDb (bracketSavepoint savepoint db)
+    case r of
+      Left (DbSqlError q e) -> do
+        if Postgresql.sqlState e == "23505" then
+          pure (Duplicate q e)
+        else
+          fmap Unique $ newEitherT $ pure r
+      _ ->
+        fmap Unique $ newEitherT $ pure r
