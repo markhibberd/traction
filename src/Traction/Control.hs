@@ -1,21 +1,27 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 module Traction.Control (
     Db (..)
   , DbError (..)
   , renderDbError
-  , DbPool
+  , DbPool (..)
+  , DbPoolConfiguration (..)
+  , defaultDbPoolConfiguration
   , MonadDb (..)
   , runDb
   , runDbT
-  , testDb
   , newPool
+  , newPoolWith
+  , newRollbackPool
+  , newRollbackPoolWith
+  , withRollbackSingletonPool
   , withConnection
   , failWith
   ) where
 
-import           Control.Monad.Catch (Handler (..), catches, bracket)
+import           Control.Monad.Catch (Exception, MonadMask (..), Handler (..), handle, catches, bracket_, throwM)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Morph (squash)
 import           Control.Monad.Trans.Class (MonadTrans (..))
@@ -24,7 +30,8 @@ import           Control.Monad.Trans.Reader (ReaderT (..), ask)
 import           Data.ByteString (ByteString)
 import           Data.Text (Text)
 import qualified Data.Text as Text
-import           Data.Pool (Pool)
+import qualified Data.Time as Time
+import           Data.Typeable (Typeable)
 import qualified Data.Pool as Pool
 
 import qualified Database.PostgreSQL.Simple as Postgresql
@@ -34,8 +41,10 @@ import           System.IO (IO)
 import           Traction.Prelude
 
 
-type DbPool =
-  Pool Postgresql.Connection
+newtype DbPool =
+  DbPool {
+      runDbPool :: forall a. Db a -> EitherT DbError IO a
+    }
 
 data DbError =
     DbSqlError Postgresql.Query Postgresql.SqlError
@@ -44,7 +53,7 @@ data DbError =
   | DbResultError Postgresql.Query Postgresql.ResultError
   | DbTooManyResults Postgresql.Query Int
   | DbNoResults Postgresql.Query
-    deriving (Show)
+    deriving (Show, Eq, Typeable)
 
 renderDbError :: DbError -> Text
 renderDbError e =
@@ -80,41 +89,81 @@ failWith :: DbError -> Db a
 failWith =
   Db . lift . left
 
-runDb :: Pool Postgresql.Connection -> Db a -> EitherT DbError IO a
+runDb :: DbPool -> Db a -> EitherT DbError IO a
 runDb pool db =
-  newEitherT $ Pool.withResource pool $ \c ->
-    -- NOTE: this could be a lot better, withTransaction will try to commit
-    --       even thought we have rolled back, ideally we would handle it in
-    --       bracket code, but requires pulling in a lot of retry logic. At
-    --       somepoint that is probably not the worst idea anyway.
-    Postgresql.withTransaction c $ do
-      r <- runEitherT $ flip runReaderT c $ _runDb db
-      case r of
-        Left _ -> do
-          Postgresql.rollback c
-          pure r
-        Right _ ->
-          pure r
+  runDbPool pool db
 
-runDbT :: Pool Postgresql.Connection -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
+runDbT :: DbPool -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
 runDbT pool handler db =
   squash $ mapEitherT (firstEitherT handler . runDb pool) db
 
-testDb :: Pool Postgresql.Connection -> Db a -> EitherT DbError IO a
-testDb pool db =
-  newEitherT $ Pool.withResource pool $ \c ->
-    bracket (Postgresql.begin c >> pure c) Postgresql.rollback . const $
-      runEitherT $
-        flip runReaderT c $ _runDb db
+data DbPoolConfiguration =
+  DbPoolConfiguration {
+      dbPoolStripes :: Int
+    , dbPoolKeepAliveSeconds :: Time.NominalDiffTime
+    , dbPoolSize :: Int
+    } deriving (Eq, Ord, Show)
 
-newPool :: ByteString -> IO (Pool Postgresql.Connection)
+defaultDbPoolConfiguration :: DbPoolConfiguration
+defaultDbPoolConfiguration =
+  DbPoolConfiguration {
+      dbPoolStripes = 4
+    , dbPoolKeepAliveSeconds = 20
+    , dbPoolSize = 20
+    }
+
+data RollbackException =
+    RollbackException DbError
+    deriving (Eq, Show, Typeable)
+
+instance Exception RollbackException
+
+newPool :: ByteString -> IO DbPool
 newPool connection =
-  Pool.createPool
+  newPoolWith connection defaultDbPoolConfiguration (pure ())
+
+newPoolWith :: ByteString -> DbPoolConfiguration -> Db () -> IO DbPool
+newPoolWith connection configuration initializer = do
+  pool <- Pool.createPool
     (Postgresql.connectPostgreSQL connection)
     Postgresql.close
-    1
-    20
-    20
+    (dbPoolStripes configuration)
+    (dbPoolKeepAliveSeconds configuration)
+    (dbPoolSize configuration)
+  pure $ DbPool $ \db ->
+    newEitherT $ Pool.withResource pool $ \c ->
+      handle (\(RollbackException e) -> pure $ Left e) $ Postgresql.withTransaction c $ do
+        r <- runEitherT $ flip runReaderT c $ _runDb (initializer >> db)
+        case r of
+          Left e -> do
+            throwM $ RollbackException e
+          Right _ ->
+            pure r
+
+newRollbackPool :: ByteString -> IO DbPool
+newRollbackPool connection =
+  newRollbackPoolWith connection defaultDbPoolConfiguration (pure ())
+
+newRollbackPoolWith :: ByteString -> DbPoolConfiguration -> Db () -> IO DbPool
+newRollbackPoolWith connection configuration initializer = do
+  pool <- Pool.createPool
+    (Postgresql.connectPostgreSQL connection)
+    Postgresql.close
+    (dbPoolStripes configuration)
+    (dbPoolKeepAliveSeconds configuration)
+    (dbPoolSize configuration)
+  pure $ DbPool $ \db ->
+    newEitherT $ Pool.withResource pool $ \c ->
+      bracket_ (Postgresql.begin c) (Postgresql.rollback c)  $ do
+        runEitherT $ flip runReaderT c $ _runDb (initializer >> db)
+
+withRollbackSingletonPool :: (MonadMask m, MonadIO m) => ByteString -> (DbPool -> m a) -> m a
+withRollbackSingletonPool connection action = do
+  c <- liftIO . Postgresql.connectPostgreSQL $ connection
+  bracket_ (liftIO $ Postgresql.begin c) (liftIO $ Postgresql.rollback c) $
+    action $ DbPool $ \db ->
+      newEitherT $
+        runEitherT $ flip runReaderT c $ _runDb db
 
 withConnection :: Postgresql.Query -> (Postgresql.Connection -> IO a) -> Db a
 withConnection query f =

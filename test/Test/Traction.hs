@@ -7,7 +7,6 @@ module Test.Traction where
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Morph (hoist, lift)
 
-import           Data.Pool (Pool)
 import           Data.Text (Text)
 
 import           Traction.Prelude
@@ -17,8 +16,6 @@ import           Traction.Sql
 
 import           Hedgehog
 import qualified Hedgehog.Gen as Gen
-
-import qualified Database.PostgreSQL.Simple as Postgresql
 
 import           System.IO (IO)
 
@@ -43,7 +40,7 @@ prop_rollback :: Property
 prop_rollback =
   property $ do
     pool <- liftIO $ mkPool
-    x <- liftIO . runEitherT . testDb pool $ do
+    x <- liftIO . runEitherT . runDb pool $ do
       -- NOTE: intentional syntax error
       fmap (== Just True) . values $ unique [sql|
           SELECT_FAUX_PAUX TRUE
@@ -60,7 +57,7 @@ prop_schema :: Property
 prop_schema =
   property $ do
     pool <- liftIO $ mkPool
-    evalExceptT . hoist lift . testDb pool $ do
+    evalExceptT . hoist lift . runDb pool $ do
       void $ migrate schema
       void $ migrate schema
 
@@ -102,12 +99,11 @@ schema = [
 db :: Db a -> PropertyT IO a
 db x = do
   pool <- liftIO mkPool
-  evalExceptT . hoist lift . testDb pool $ migrate schema >> x
+  evalExceptT . hoist lift . runDb pool $ migrate schema >> x
 
-
-mkPool :: IO (Pool Postgresql.Connection)
+mkPool :: IO DbPool
 mkPool =
-  newPool "dbname=traction_test host=localhost user=traction_test password=traction_test port=5432"
+  newRollbackPool "dbname=traction_test host=localhost user=traction_test password=traction_test port=5432"
 
 checkDb :: MonadIO m => Group -> m Bool
 checkDb group =

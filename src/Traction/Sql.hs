@@ -11,7 +11,9 @@ module Traction.Sql (
   , execute
   , execute_
   , value
+  , valueWith
   , values
+  , valuesWith
   ) where
 
 import           Database.PostgreSQL.Simple.SqlQQ (sql)
@@ -80,6 +82,14 @@ value :: Functor f => f (Only a) -> f a
 value =
   fmap fromOnly
 
+valueWith :: Functor f => (a -> b) -> f (Only a) -> f b
+valueWith f =
+  fmap (f . fromOnly)
+
 values :: (Functor f, Functor g) => g (f (Only a)) -> g (f a)
 values =
   (fmap . fmap) fromOnly
+
+valuesWith :: (Functor f, Functor g) => (a -> b) -> g (f (Only a)) -> g (f b)
+valuesWith f =
+  (fmap . fmap) (f . fromOnly)
