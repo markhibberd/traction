@@ -36,6 +36,7 @@ library
     Traction.Migration
     Traction.Prelude
     Traction.Sql
+    Traction.QQ
 
 test-suite test
   default-language: Haskell2010
