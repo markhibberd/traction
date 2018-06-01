@@ -19,6 +19,16 @@ import qualified Hedgehog.Gen as Gen
 
 import           System.IO (IO)
 
+prop_insert_unique :: Property
+prop_insert_unique =
+  property $ do
+    organisation <- forAll genOrganisation
+    r <- db $ do
+      o1 <- withUniqueCheck $ oinsert organisation
+      o2 <- withUniqueCheck $ oinsert organisation
+      pure (isUnique o1, isDuplicate o2)
+    (True, True) === r
+
 prop_insert_exists :: Property
 prop_insert_exists =
   property $ do

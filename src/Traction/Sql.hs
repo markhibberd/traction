@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -17,11 +18,16 @@ module Traction.Sql (
   , valueWith
   , values
   , valuesWith
+  , Schema (..)
+  , newSchema
   , Savepoint (..)
+  , newSavepoint
   , createSavepoint
   , releaseSavepoint
   , rollbackSavepoint
   , Unique (..)
+  , isUnique
+  , isDuplicate
   , withUniqueCheck
   , withUniqueCheckSavepoint
   ) where
@@ -30,11 +36,18 @@ import           Control.Monad.Trans.Class (MonadTrans (..))
 import           Control.Monad.Trans.Reader (ask, runReaderT)
 import           Control.Monad.IO.Class (MonadIO (..))
 
+import qualified Data.ByteString.Builder as ByteStringBuilder
+import qualified Data.Char as Char
+import           Data.Data (Data)
 import           Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
+import           Data.Typeable (Typeable)
 
 import           Database.PostgreSQL.Simple.SqlQQ (sql)
 import           Database.PostgreSQL.Simple (ToRow, FromRow, Only (..))
 import qualified Database.PostgreSQL.Simple as Postgresql
+import qualified Database.PostgreSQL.Simple.ToField as Postgresql
 
 import           Traction.Control
 import           Traction.Prelude
@@ -110,22 +123,45 @@ valuesWith :: (Functor f, Functor g) => (a -> b) -> g (f (Only a)) -> g (f b)
 valuesWith f =
   (fmap . fmap) (f . fromOnly)
 
+newtype Schema =
+  Schema {
+      renderSchema :: Text
+    } deriving (Eq, Show, Data, Typeable)
+
+instance Postgresql.ToField Schema where
+  toField = Postgresql.EscapeIdentifier . Text.encodeUtf8 . renderSchema
+
+newSchema :: Text -> Maybe Schema
+newSchema t =
+  if Text.all (\c -> Char.isAlpha c || c == '_') t
+    then Just (Schema t)
+    else Nothing
+
 newtype Savepoint =
   Savepoint {
       renderSavepoint :: Text
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Data, Typeable)
+
+instance Postgresql.ToField Savepoint where
+  toField = Postgresql.Plain . ByteStringBuilder.byteString . Text.encodeUtf8 . renderSavepoint
+
+newSavepoint :: Text -> Maybe Savepoint
+newSavepoint t =
+  if Text.all (\c -> Char.isAlpha c || c == '_') t
+    then Just (Savepoint t)
+    else Nothing
 
 createSavepoint :: Savepoint -> Db ()
-createSavepoint n =
-  void $ execute [sql| SAVEPOINT ? |] (Only . renderSavepoint $ n)
+createSavepoint s =
+  void $ execute [sql| SAVEPOINT ? |] (Only s)
 
 releaseSavepoint :: Savepoint -> Db ()
-releaseSavepoint n =
-  void $ execute [sql| RELEASE SAVEPOINT ? |] (Only . renderSavepoint $ n)
+releaseSavepoint s =
+  void $ execute [sql| RELEASE SAVEPOINT ? |] (Only s)
 
 rollbackSavepoint :: Savepoint -> Db ()
-rollbackSavepoint n =
-  void $ execute [sql| ROLLBACK TO SAVEPOINT ? |] (Only . renderSavepoint $ n)
+rollbackSavepoint s =
+  void $ execute [sql| ROLLBACK TO SAVEPOINT ? |] (Only s)
 
 bracketSavepoint :: Savepoint -> Db a -> Db a
 bracketSavepoint savepoint db =
@@ -143,6 +179,18 @@ data Unique a =
     Unique a
   | Duplicate Postgresql.Query Postgresql.SqlError
     deriving (Show, Functor)
+
+isUnique :: Unique a -> Bool
+isUnique u =
+  case u of
+    Unique _ ->
+      True
+    Duplicate _ _ ->
+      False
+
+isDuplicate :: Unique a -> Bool
+isDuplicate =
+  not . isUnique
 
 withUniqueCheck :: Db a -> Db (Unique a)
 withUniqueCheck =
