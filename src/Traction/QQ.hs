@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -9,13 +10,20 @@ module Traction.QQ (
   , sql
   ) where
 
+import           Data.Data (Data)
+import           Data.Generics (extQ)
+import           Data.Text (Text)
 import qualified Data.Text as Text
 
 import           Database.PostgreSQL.Simple.SqlQQ (sql)
 
+import           Language.Haskell.TH
+import           Language.Haskell.TH.Quote
+
 import qualified Prelude
 
 import           Traction.Sql (newSchema, newSavepoint)
+import           Traction.Prelude
 
 schema :: QuasiQuoter
 schema =
@@ -42,3 +50,11 @@ savepoint =
   , quoteType = Prelude.error "not able to qq types"
   , quoteDec = Prelude.error "not able to qq decs"
   }
+
+dataExp :: Data a => a -> Q Exp
+dataExp a =
+  dataToExpQ (const Nothing `extQ` textExp) a
+
+textExp :: Text -> Maybe ExpQ
+textExp =
+  pure . appE (varE 'Text.pack) . litE . StringL . Text.unpack

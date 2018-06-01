@@ -20,6 +20,8 @@ library
     , mmorph == 1.*
     , postgresql-simple == 0.5.*
     , resource-pool == 0.2.*
+    , syb >= 0.4 && < 0.8
+    , template-haskell
     , text == 1.2.*
     , time >= 1.5 && < 1.10
     , transformers == 0.5.*
