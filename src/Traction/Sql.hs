@@ -5,6 +5,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 module Traction.Sql (
     Only (..)
+  , Binary (..)
   , sql
   , mandatory
   , mandatory_
@@ -45,7 +46,7 @@ import qualified Data.Text.Encoding as Text
 import           Data.Typeable (Typeable)
 
 import           Database.PostgreSQL.Simple.SqlQQ (sql)
-import           Database.PostgreSQL.Simple (ToRow, FromRow, Only (..))
+import           Database.PostgreSQL.Simple (ToRow, FromRow, Only (..), Binary (..))
 import qualified Database.PostgreSQL.Simple as Postgresql
 import qualified Database.PostgreSQL.Simple.ToField as Postgresql
 
