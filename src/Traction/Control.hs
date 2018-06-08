@@ -54,6 +54,7 @@ data DbError =
   | DbResultError Postgresql.Query Postgresql.ResultError
   | DbTooManyResults Postgresql.Query Int
   | DbNoResults Postgresql.Query
+  | DbEncodingInvariant Postgresql.Query Text Text
     deriving (Show, Eq, Typeable)
 
 renderDbError :: DbError -> Text
@@ -71,6 +72,8 @@ renderDbError e =
       mconcat ["Too many results [", show n , "], for query: ", show q]
     DbNoResults q ->
       mconcat ["Query generated no results, for query: ", show q]
+    DbEncodingInvariant q field encoding ->
+      mconcat ["Query could not decode results, expected to be able to decode [", Text.unpack field, "], to type, [", Text.unpack encoding, "], for query: ", show q]
 
 newtype Db a =
   Db {
