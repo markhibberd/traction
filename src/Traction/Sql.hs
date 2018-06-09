@@ -6,7 +6,6 @@
 module Traction.Sql (
     Only (..)
   , Binary (..)
-  , sql
   , mandatory
   , mandatory_
   , unique
@@ -193,13 +192,13 @@ isDuplicate :: Unique a -> Bool
 isDuplicate =
   not . isUnique
 
-withUniqueCheck :: Db a -> Db (Unique a)
+withUniqueCheck :: MonadDb m => Db a -> m (Unique a)
 withUniqueCheck =
   withUniqueCheckSavepoint (Savepoint "duplicate_key_savepoint")
 
-withUniqueCheckSavepoint :: Savepoint -> Db a -> Db (Unique a)
+withUniqueCheckSavepoint :: MonadDb m => Savepoint -> Db a -> m (Unique a)
 withUniqueCheckSavepoint savepoint db =
-  Db $ ask >>= \c -> lift $ do
+  liftDb . Db $ ask >>= \c -> lift $ do
     r <- liftIO . runEitherT $ flip runReaderT c $ _runDb (bracketSavepoint savepoint db)
     case r of
       Left (DbSqlError q e) -> do

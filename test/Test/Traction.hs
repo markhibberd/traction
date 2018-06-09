@@ -13,6 +13,7 @@ import           Traction.Prelude
 import           Traction.Control
 import           Traction.Migration
 import           Traction.Sql
+import           Traction.QQ
 
 import           Hedgehog
 import qualified Hedgehog.Gen as Gen
