@@ -6,6 +6,7 @@
 module Traction.Sql (
     Only (..)
   , Binary (..)
+  , PGArray (..)
   , mandatory
   , mandatory_
   , unique
@@ -46,6 +47,7 @@ import           Data.Typeable (Typeable)
 
 import           Database.PostgreSQL.Simple.SqlQQ (sql)
 import           Database.PostgreSQL.Simple (ToRow, FromRow, Only (..), Binary (..))
+import           Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Database.PostgreSQL.Simple as Postgresql
 import qualified Database.PostgreSQL.Simple.ToField as Postgresql
 
