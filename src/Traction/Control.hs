@@ -2,6 +2,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeFamilies #-}
 module Traction.Control (
     Db (..)
   , DbError (..)
@@ -11,6 +12,7 @@ module Traction.Control (
   , defaultDbPoolConfiguration
   , MonadDb (..)
   , transaction
+  , transactionT
   , runDb
   , runDbT
   , runDbWith
@@ -132,6 +134,19 @@ transaction db =
     NotInTransaction pool ->
       runDbPool pool $ \c ->
         runReaderT (_runDb db) (InTransaction c)
+
+transactionT :: EitherT e Db a -> EitherT e Db a
+transactionT =
+  transactional runEitherT newEitherT
+
+transactional :: (Monad m, Monad n) => (m a -> Db (n a)) -> (Db (n a) -> m a) -> m a -> m a
+transactional sifter lifter db =
+  lifter . Db $ ask >>= \cc -> lift $ case cc of
+    InTransaction c ->
+      runReaderT (_runDb $ sifter db) (InTransaction c)
+    NotInTransaction pool ->
+      runDbPool pool $ \c ->
+        runReaderT (_runDb $ sifter db) (InTransaction c)
 
 data DbPoolConfiguration =
   DbPoolConfiguration {
