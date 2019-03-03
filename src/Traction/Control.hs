@@ -10,8 +10,11 @@ module Traction.Control (
   , DbPoolConfiguration (..)
   , defaultDbPoolConfiguration
   , MonadDb (..)
+  , transaction
   , runDb
   , runDbT
+  , runDbWith
+  , runDbWithT
   , newPool
   , newPoolWith
   , newRollbackPool
@@ -44,8 +47,17 @@ import           Traction.Prelude
 
 newtype DbPool =
   DbPool {
-      runDbPool :: forall a. Db a -> EitherT DbError IO a
+      runDbPool :: forall a. (Postgresql.Connection -> EitherT DbError IO a) -> EitherT DbError IO a
     }
+
+data TransactionContext =
+    InTransaction Postgresql.Connection
+  | NotInTransaction DbPool
+
+newtype Db a =
+  Db {
+      _runDb :: ReaderT TransactionContext (EitherT DbError IO) a
+    }  deriving (Functor, Applicative, Monad, MonadIO)
 
 data DbError =
     DbSqlError Postgresql.Query Postgresql.SqlError
@@ -75,11 +87,6 @@ renderDbError e =
     DbEncodingInvariant q field encoding ->
       mconcat ["Query could not decode results, expected to be able to decode [", Text.unpack field, "], to type, [", Text.unpack encoding, "], for query: ", show q]
 
-newtype Db a =
-  Db {
-      _runDb :: ReaderT Postgresql.Connection (EitherT DbError IO) a
-    }  deriving (Functor, Applicative, Monad, MonadIO)
-
 class MonadIO m => MonadDb m where
   liftDb :: Db a -> m a
 
@@ -89,17 +96,42 @@ instance MonadDb Db where
 instance MonadDb m => MonadDb (ExceptT e m) where
   liftDb = lift . liftDb
 
+data WithTransaction =
+    WithTransaction
+  | WithoutTransaction
+
 failWith :: DbError -> Db a
 failWith =
   Db . lift . left
 
 runDb :: DbPool -> Db a -> EitherT DbError IO a
 runDb pool db =
-  runDbPool pool db
+  runDbWith pool WithTransaction db
 
 runDbT :: DbPool -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
 runDbT pool handler db =
-  squash $ mapEitherT (firstEitherT handler . runDb pool) db
+  runDbWithT pool WithTransaction handler db
+
+runDbWith :: DbPool -> WithTransaction -> Db a -> EitherT DbError IO a
+runDbWith pool tx db =
+  runReaderT (_runDb $ case tx of
+    WithTransaction ->
+      transaction db
+    WithoutTransaction ->
+      db) $ NotInTransaction pool
+
+runDbWithT :: DbPool -> WithTransaction -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
+runDbWithT pool tx handler db =
+  squash $ mapEitherT (firstEitherT handler . runDbWith pool tx) db
+
+transaction :: Db a -> Db a
+transaction db =
+  Db $ ask >>= \cc -> lift $ case cc of
+    InTransaction c ->
+      runReaderT (_runDb db) (InTransaction c)
+    NotInTransaction pool ->
+      runDbPool pool $ \c ->
+        runReaderT (_runDb db) (InTransaction c)
 
 data DbPoolConfiguration =
   DbPoolConfiguration {
@@ -137,7 +169,9 @@ newPoolWith connection configuration initializer = do
   pure $ DbPool $ \db ->
     newEitherT $ Pool.withResource pool $ \c ->
       handle (\(RollbackException e) -> pure $ Left e) $ Postgresql.withTransaction c $ do
-        r <- runEitherT $ flip runReaderT c $ _runDb (initializer >> db)
+        r <- runEitherT $ do
+          runReaderT (_runDb initializer) (InTransaction c)
+          db c
         case r of
           Left e -> do
             throwM $ RollbackException e
@@ -159,19 +193,23 @@ newRollbackPoolWith connection configuration initializer = do
   pure $ DbPool $ \db ->
     newEitherT $ Pool.withResource pool $ \c ->
       bracket_ (Postgresql.begin c) (Postgresql.rollback c)  $ do
-        runEitherT $ flip runReaderT c $ _runDb (initializer >> db)
+        runEitherT $ do
+          runReaderT (_runDb initializer) (InTransaction c)
+          db c
 
 withRollbackSingletonPool :: (MonadMask m, MonadIO m) => ByteString -> (DbPool -> m a) -> m a
 withRollbackSingletonPool connection action = do
   c <- liftIO . Postgresql.connectPostgreSQL $ connection
   bracket_ (liftIO $ Postgresql.begin c) (liftIO $ Postgresql.rollback c) $
-    action $ DbPool $ \db ->
-      newEitherT $
-        runEitherT $ flip runReaderT c $ _runDb db
+    action $ DbPool $ \db -> db c
 
 withConnection :: Postgresql.Query -> (Postgresql.Connection -> IO a) -> Db a
 withConnection query f =
-  Db $ ask >>= lift . safely query . f
+  Db $ ask >>= \cc -> case cc of
+    InTransaction c ->
+      lift . safely query . f $ c
+    NotInTransaction pool ->
+      lift . runDbPool pool $ \c -> (safely query . f $ c)
 
 safely :: Postgresql.Query -> IO a -> EitherT DbError IO a
 safely query action =
