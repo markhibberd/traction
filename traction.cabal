@@ -1,13 +1,19 @@
 name: traction
 version: 0.1.0
 license: BSD3
+license-file: LICENSE
 author: Mark Hibberd <mark@hibberd.id.au>
 maintainer: Mark Hibberd <mark@hibberd.id.au>
 copyright: (c) 2017 Mark Hibberd
 cabal-version: >= 1.24
 build-type: Simple
+category: Database
+synopsis: Tools for postgresql-simple.
 description:
   A few tools for using postgresql-simple.
+source-repository head
+  type: git
+  location: https://github.com/markhibberd/traction
 
 library
   default-language: Haskell2010
@@ -60,4 +66,3 @@ test-suite test
   ghc-options:
     -Wall
     -threaded
-    -O2
