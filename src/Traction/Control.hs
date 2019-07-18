@@ -26,7 +26,7 @@ module Traction.Control (
   , failWith
   ) where
 
-import           Control.Monad.Catch (Exception, MonadMask (..), Handler (..), handle, catches, bracket_, throwM)
+import           Control.Monad.Catch (Exception, MonadMask (..), MonadThrow, MonadCatch, Handler (..), handle, catches, bracket_, throwM)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Morph (squash)
 import           Control.Monad.Trans.Class (MonadTrans (..))
@@ -59,7 +59,7 @@ data TransactionContext =
 newtype Db a =
   Db {
       _runDb :: ReaderT TransactionContext (EitherT DbError IO) a
-    }  deriving (Functor, Applicative, Monad, MonadIO)
+    }  deriving (Functor, Applicative, Monad, MonadIO, MonadMask, MonadThrow, MonadCatch)
 
 data DbError =
     DbSqlError Postgresql.Query Postgresql.SqlError
