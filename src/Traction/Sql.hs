@@ -167,7 +167,7 @@ rollbackSavepoint s =
 
 bracketSavepoint :: Savepoint -> Db a -> Db a
 bracketSavepoint savepoint db =
-  Db $ ask >>= \c -> lift $ do
+  DbT $ ask >>= \c -> lift $ do
     r <- liftIO . runEitherT $ flip runReaderT c $ _runDb (createSavepoint savepoint >> db)
     case r of
       Left _ -> do
@@ -200,7 +200,7 @@ withUniqueCheck =
 
 withUniqueCheckSavepoint :: MonadDb m => Savepoint -> Db a -> m (Unique a)
 withUniqueCheckSavepoint savepoint db =
-  liftDb . Db $ ask >>= \c -> lift $ do
+  liftDb . DbT $ ask >>= \c -> lift $ do
     r <- liftIO . runEitherT $ flip runReaderT c $ _runDb (bracketSavepoint savepoint db)
     case r of
       Left (DbSqlError q e) -> do
