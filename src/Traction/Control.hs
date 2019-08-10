@@ -4,8 +4,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 module Traction.Control (
-    Db
-  , DbT (..)
+    Db (..)
   , DbError (..)
   , renderDbError
   , DbPool (..)
@@ -29,7 +28,7 @@ module Traction.Control (
 
 import           Control.Monad.Catch (Exception, MonadMask (..), MonadThrow, MonadCatch, Handler (..), handle, catches, bracket_, throwM)
 import           Control.Monad.IO.Class (MonadIO (..))
-import           Control.Monad.Morph (MFunctor (..), squash)
+import           Control.Monad.Morph (squash)
 import           Control.Monad.Trans.Class (MonadTrans (..))
 import           Control.Monad.Trans.Except (ExceptT(..))
 import           Control.Monad.Trans.Reader (ReaderT (..), ask)
@@ -57,19 +56,10 @@ data TransactionContext =
     InTransaction Postgresql.Connection
   | NotInTransaction DbPool
 
-type Db =
-  DbT IO
-
-newtype DbT m a =
-  DbT {
-      _runDb :: ReaderT TransactionContext (EitherT DbError m) a
+newtype Db a =
+  Db {
+      _runDb :: ReaderT TransactionContext (EitherT DbError IO) a
     }  deriving (Functor, Applicative, Monad, MonadIO, MonadMask, MonadThrow, MonadCatch)
-
-instance MFunctor DbT where
-  hoist = hoist
-
-instance MonadTrans DbT where
-  lift = DbT . lift . lift
 
 data DbError =
     DbSqlError Postgresql.Query Postgresql.SqlError
@@ -100,10 +90,10 @@ renderDbError e =
       mconcat ["Query could not decode results, expected to be able to decode [", Text.unpack field, "], to type, [", Text.unpack encoding, "], for query: ", show q]
 
 class MonadIO m => MonadDb m where
-  liftDb :: DbT IO a -> m a
+  liftDb :: Db a -> m a
 
-instance MonadIO m => MonadDb (DbT m) where
-  liftDb = hoist liftIO
+instance MonadDb Db where
+  liftDb = id
 
 instance MonadDb m => MonadDb (ExceptT e m) where
   liftDb = lift . liftDb
@@ -114,7 +104,7 @@ data WithTransaction =
 
 failWith :: DbError -> Db a
 failWith =
-  DbT . lift . left
+  Db . lift . left
 
 runDb :: DbPool -> Db a -> EitherT DbError IO a
 runDb pool db =
@@ -138,7 +128,7 @@ runDbWithT pool tx handler db =
 
 transaction :: Db a -> Db a
 transaction db =
-  DbT $ ask >>= \cc -> lift $ case cc of
+  Db $ ask >>= \cc -> lift $ case cc of
     InTransaction c ->
       runReaderT (_runDb db) (InTransaction c)
     NotInTransaction pool ->
@@ -151,7 +141,7 @@ transactionT =
 
 transactional :: (Monad m, Monad n) => (m a -> Db (n a)) -> (Db (n a) -> m a) -> m a -> m a
 transactional sifter lifter db =
-  lifter . DbT $ ask >>= \cc -> lift $ case cc of
+  lifter . Db $ ask >>= \cc -> lift $ case cc of
     InTransaction c ->
       runReaderT (_runDb $ sifter db) (InTransaction c)
     NotInTransaction pool ->
@@ -230,7 +220,7 @@ withRollbackSingletonPool connection action = do
 
 withConnection :: Postgresql.Query -> (Postgresql.Connection -> IO a) -> Db a
 withConnection query f =
-  DbT $ ask >>= \cc -> case cc of
+  Db $ ask >>= \cc -> case cc of
     InTransaction c ->
       lift . safely query . f $ c
     NotInTransaction pool ->
