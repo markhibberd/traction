@@ -5,7 +5,7 @@ license-file: LICENSE
 author: Mark Hibberd <mark@hibberd.id.au>
 maintainer: Mark Hibberd <mark@hibberd.id.au>
 copyright: (c) 2017 Mark Hibberd
-cabal-version: >= 1.24
+cabal-version: 1.24
 build-type: Simple
 category: Database
 synopsis: Tools for postgresql-simple.
