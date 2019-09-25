@@ -8,6 +8,7 @@ import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Morph (hoist, lift)
 
 import           Data.Text (Text)
+import qualified Data.Text as Text
 
 import           Traction.Prelude
 import           Traction.Control
@@ -19,6 +20,18 @@ import           Hedgehog
 import qualified Hedgehog.Gen as Gen
 
 import           System.IO (IO)
+
+prop_explain :: Property
+prop_explain =
+  property $ do
+    organisation <- forAll genOrganisation
+    r <- db $
+      explain [sql|
+        EXPLAIN INSERT INTO organisation (name)
+            VALUES (?)
+          RETURNING id
+      |] (Only organisation)
+    assert (Text.isPrefixOf "Insert on organisation" r)
 
 prop_insert_unique :: Property
 prop_insert_unique =

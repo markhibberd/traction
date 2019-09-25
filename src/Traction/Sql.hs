@@ -15,6 +15,7 @@ module Traction.Sql (
   , query_
   , execute
   , execute_
+  , explain
   , value
   , valueWith
   , values
@@ -92,6 +93,9 @@ execute_ :: MonadDb m => Postgresql.Query -> m Int64
 execute_ q =
   liftDb . withConnection q $ \c ->
     Postgresql.execute_  c q
+
+explain :: (MonadDb m, ToRow a) => Postgresql.Query -> a -> m Text
+explain q a = Text.unlines . fmap fromOnly <$> query q a
 
 possibly :: Postgresql.Query -> Db [a] -> Db (Maybe a)
 possibly q db =
