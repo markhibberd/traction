@@ -7,6 +7,7 @@ module Traction.Control (
     Db
   , DbT (..)
   , DbError (..)
+  , Tracer
   , renderDbError
   , DbPool (..)
   , DbPoolConfiguration (..)
@@ -18,6 +19,10 @@ module Traction.Control (
   , runDbT
   , runDbWith
   , runDbWithT
+  , runDbTracing
+  , runDbTracingT
+  , runDbTracingWith
+  , runDbTracingWithT
   , newPool
   , newPoolWith
   , newRollbackPool
@@ -25,6 +30,9 @@ module Traction.Control (
   , withRollbackSingletonPool
   , withConnection
   , failWith
+  , withTracing
+  , trace
+  , noTracing
   ) where
 
 import           Control.Monad.Catch (Exception, MonadMask (..), MonadThrow, MonadCatch, Handler (..), handle, catches, bracket_, throwM)
@@ -32,7 +40,7 @@ import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Morph (MFunctor (..), squash)
 import           Control.Monad.Trans.Class (MonadTrans (..))
 import           Control.Monad.Trans.Except (ExceptT(..))
-import           Control.Monad.Trans.Reader (ReaderT (..), ask)
+import           Control.Monad.Trans.Reader (ReaderT (..), ask, asks, local)
 
 import           Data.ByteString (ByteString)
 import           Data.Text (Text)
@@ -57,12 +65,23 @@ data TransactionContext =
     InTransaction Postgresql.Connection
   | NotInTransaction DbPool
 
+data TractionSettings =
+  TractionSettings {
+      transactionContext :: TransactionContext
+    , tracer :: Tracer
+    }
+
+type Tracer = Text -> IO ()
+
+noTracing :: Tracer
+noTracing = const (pure ())
+
 type Db =
   DbT IO
 
 newtype DbT m a =
   DbT {
-      _runDb :: ReaderT TransactionContext (EitherT DbError m) a
+      _runDb :: ReaderT TractionSettings (EitherT DbError m) a
     }  deriving (Functor, Applicative, Monad, MonadIO, MonadMask, MonadThrow, MonadCatch)
 
 instance MFunctor DbT where
@@ -126,24 +145,40 @@ runDbT pool handler db =
 
 runDbWith :: DbPool -> WithTransaction -> Db a -> EitherT DbError IO a
 runDbWith pool tx db =
+  runDbTracingWith pool noTracing tx db
+
+runDbWithT :: DbPool -> WithTransaction -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
+runDbWithT pool tx handler db =
+  runDbTracingWithT pool noTracing tx handler db
+
+runDbTracing :: DbPool -> Tracer -> Db a -> EitherT DbError IO a
+runDbTracing pool tr db =
+  runDbTracingWith pool tr WithTransaction db
+
+runDbTracingT :: DbPool -> Tracer -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
+runDbTracingT pool tr handler db =
+  runDbTracingWithT pool tr WithTransaction handler db
+
+runDbTracingWith :: DbPool -> Tracer -> WithTransaction -> Db a -> EitherT DbError IO a
+runDbTracingWith pool tr tx db =
   runReaderT (_runDb $ case tx of
     WithTransaction ->
       transaction db
     WithoutTransaction ->
-      db) $ NotInTransaction pool
+      db) $ TractionSettings (NotInTransaction pool) tr
 
-runDbWithT :: DbPool -> WithTransaction -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
-runDbWithT pool tx handler db =
-  squash $ mapEitherT (firstEitherT handler . runDbWith pool tx) db
+runDbTracingWithT :: DbPool -> Tracer -> WithTransaction -> (DbError -> e) -> EitherT e Db a -> EitherT e IO a
+runDbTracingWithT pool tr tx handler db =
+  squash $ mapEitherT (firstEitherT handler . runDbTracingWith pool tr tx) db
 
 transaction :: Db a -> Db a
 transaction db =
-  DbT $ ask >>= \cc -> lift $ case cc of
-    InTransaction c ->
-      runReaderT (_runDb db) (InTransaction c)
+  DbT $ ask >>= \cc -> lift $ case transactionContext cc of
+    InTransaction _ ->
+      runReaderT (_runDb db) cc
     NotInTransaction pool ->
       runDbPool pool $ \c ->
-        runReaderT (_runDb db) (InTransaction c)
+        runReaderT (_runDb db) $ TractionSettings (InTransaction c) noTracing
 
 transactionT :: EitherT e Db a -> EitherT e Db a
 transactionT =
@@ -151,12 +186,12 @@ transactionT =
 
 transactional :: (Monad m, Monad n) => (m a -> Db (n a)) -> (Db (n a) -> m a) -> m a -> m a
 transactional sifter lifter db =
-  lifter . DbT $ ask >>= \cc -> lift $ case cc of
+  lifter . DbT $ ask >>= \cc -> lift $ case transactionContext cc of
     InTransaction c ->
-      runReaderT (_runDb $ sifter db) (InTransaction c)
+      runReaderT (_runDb $ sifter db) $ TractionSettings (InTransaction c) noTracing
     NotInTransaction pool ->
       runDbPool pool $ \c ->
-        runReaderT (_runDb $ sifter db) (InTransaction c)
+        runReaderT (_runDb $ sifter db) $ TractionSettings (InTransaction c) noTracing
 
 data DbPoolConfiguration =
   DbPoolConfiguration {
@@ -195,7 +230,7 @@ newPoolWith connection configuration initializer = do
     newEitherT $ Pool.withResource pool $ \c ->
       handle (\(RollbackException e) -> pure $ Left e) $ Postgresql.withTransaction c $ do
         r <- runEitherT $ do
-          runReaderT (_runDb initializer) (InTransaction c)
+          runReaderT (_runDb initializer) $ TractionSettings (InTransaction c) noTracing
           db c
         case r of
           Left e -> do
@@ -219,7 +254,7 @@ newRollbackPoolWith connection configuration initializer = do
     newEitherT $ Pool.withResource pool $ \c ->
       bracket_ (Postgresql.begin c) (Postgresql.rollback c)  $ do
         runEitherT $ do
-          runReaderT (_runDb initializer) (InTransaction c)
+          runReaderT (_runDb initializer) $ TractionSettings (InTransaction c) noTracing
           db c
 
 withRollbackSingletonPool :: (MonadMask m, MonadIO m) => ByteString -> (DbPool -> m a) -> m a
@@ -230,11 +265,19 @@ withRollbackSingletonPool connection action = do
 
 withConnection :: Postgresql.Query -> (Postgresql.Connection -> IO a) -> Db a
 withConnection query f =
-  DbT $ ask >>= \cc -> case cc of
+  DbT $ ask >>= \cc -> case transactionContext cc of
     InTransaction c ->
       lift . safely query . f $ c
     NotInTransaction pool ->
       lift . runDbPool pool $ \c -> (safely query . f $ c)
+
+withTracing :: Tracer -> DbT m () -> DbT m ()
+withTracing f (DbT db) = DbT $ local (\x -> x { tracer = f }) db
+
+trace :: (MonadDb m, Show a) => a -> m ()
+trace a =
+  liftDb . DbT $ asks tracer >>= \t ->
+    liftIO . t . Text.pack $ show a
 
 safely :: Postgresql.Query -> IO a -> EitherT DbError IO a
 safely query action =
