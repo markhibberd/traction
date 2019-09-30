@@ -15,6 +15,8 @@ module Traction.Sql (
   , query_
   , execute
   , execute_
+  , explain
+  , explain_
   , value
   , valueWith
   , values
@@ -64,34 +66,46 @@ mandatory_ q =
   liftDb . definitely q $ unique_ q
 
 unique :: (MonadDb m, ToRow a, FromRow b) => Postgresql.Query -> a -> m (Maybe b)
-unique q parameters =
+unique q parameters = do
+  trace q
   liftDb . possibly q . withConnection q $ \c ->
     Postgresql.query c q parameters
 
 unique_ :: (MonadDb m, FromRow a) => Postgresql.Query -> m (Maybe a)
-unique_ q =
+unique_ q = do
+  trace q
   liftDb . possibly q . withConnection q $ \c ->
     Postgresql.query_ c q
 
 query :: (MonadDb m, ToRow a, FromRow  b) => Postgresql.Query -> a -> m [b]
-query q parameters =
+query q parameters = do
+  trace q
   liftDb . withConnection q $ \c ->
     Postgresql.query c q parameters
 
 query_ :: (MonadDb m, FromRow a) => Postgresql.Query -> m [a]
-query_ q =
+query_ q = do
+  trace q
   liftDb . withConnection q $ \c ->
     Postgresql.query_ c q
 
 execute :: (MonadDb m, ToRow a) => Postgresql.Query -> a -> m Int64
-execute q parameters =
+execute q parameters = do
+  trace q
   liftDb . withConnection q $ \c ->
     Postgresql.execute c q parameters
 
 execute_ :: MonadDb m => Postgresql.Query -> m Int64
-execute_ q =
+execute_ q = do
+  trace q
   liftDb . withConnection q $ \c ->
     Postgresql.execute_  c q
+
+explain :: (MonadDb m, ToRow a) => Postgresql.Query -> a -> m Text
+explain q a = Text.unlines . value <$> query q a
+
+explain_ :: MonadDb m => Postgresql.Query -> m Text
+explain_ q = Text.unlines . value <$> query_ q
 
 possibly :: Postgresql.Query -> Db [a] -> Db (Maybe a)
 possibly q db =

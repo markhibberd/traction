@@ -24,14 +24,14 @@ library
     , containers >= 0.5.8 && < 0.7
     , exceptions == 0.10.*
     , mmorph == 1.*
-    , postgresql-simple == 0.5.*
+    , postgresql-simple >= 0.5 && < 0.7
     , resource-pool == 0.2.*
     , syb >= 0.4 && < 0.8
     , template-haskell
     , text == 1.2.*
     , time >= 1.5 && < 1.10
     , transformers == 0.5.*
-    , transformers-either == 0.0.*
+    , transformers-either >= 0 && < 0.2
 
   ghc-options:
     -Wall
@@ -53,9 +53,9 @@ test-suite test
   hs-source-dirs: test
   build-depends:
       base >= 3 && < 5
-    , hedgehog == 0.5.*
+    , hedgehog >= 0.5 && < 1.1
     , mmorph == 1.*
-    , postgresql-simple == 0.5.*
+    , postgresql-simple >= 0.5 && < 0.7
     , resource-pool == 0.2.*
     , text == 1.2.*
     , traction
