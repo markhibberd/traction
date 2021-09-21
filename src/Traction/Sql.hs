@@ -15,6 +15,7 @@ module Traction.Sql (
   , query_
   , execute
   , execute_
+  , executeMany
   , explain
   , explain_
   , value
@@ -100,6 +101,12 @@ execute_ q = do
   trace q
   liftDb . withConnection q $ \c ->
     Postgresql.execute_  c q
+
+executeMany :: (MonadDb m, ToRow a) => Postgresql.Query -> [a] -> m Int64
+executeMany q parameters = do
+  trace q
+  liftDb . withConnection q $ \c ->
+    Postgresql.executeMany c q parameters
 
 explain :: (MonadDb m, ToRow a) => Postgresql.Query -> a -> m Text
 explain q a = Text.unlines . value <$> query q a
